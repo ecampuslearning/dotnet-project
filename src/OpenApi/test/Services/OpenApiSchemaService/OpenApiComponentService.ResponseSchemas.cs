@@ -3,6 +3,7 @@
 
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.OpenApi.Any;
 using Microsoft.OpenApi.Models;
 
 public partial class OpenApiComponentServiceTests : OpenApiDocumentServiceTestBase
@@ -91,6 +92,51 @@ public partial class OpenApiComponentServiceTests : OpenApiDocumentServiceTestBa
     }
 
     [Fact]
+    public async Task GetOpenApiResponse_GeneratesSchemaForPoco_WithValidationAttributes()
+    {
+        // Arrange
+        var builder = CreateBuilder();
+
+        // Act
+        builder.MapGet("/", () => new ProjectBoard { Id = 2, Name = "Test", IsPrivate = false });
+
+        // Assert
+        await VerifyOpenApiDocument(builder, document =>
+        {
+            var operation = document.Paths["/"].Operations[OperationType.Get];
+            var response = operation.Responses["200"];
+
+            Assert.NotNull(response);
+            var content = Assert.Single(response.Content);
+            Assert.Equal("application/json", content.Key);
+            Assert.NotNull(content.Value.Schema);
+            Assert.Equal("object", content.Value.Schema.Type);
+            Assert.Collection(content.Value.Schema.Properties,
+                property =>
+                {
+                    Assert.Equal("id", property.Key);
+                    Assert.Equal("integer", property.Value.Type);
+                    Assert.Equal(1, property.Value.Minimum);
+                    Assert.Equal(100, property.Value.Maximum);
+                },
+                property =>
+                {
+                    Assert.Equal("name", property.Key);
+                    Assert.Equal("string", property.Value.Type);
+                    Assert.Equal(5, property.Value.MinLength);
+                },
+                property =>
+                {
+                    Assert.Equal("isPrivate", property.Key);
+                    Assert.Equal("boolean", property.Value.Type);
+                    var defaultValue = Assert.IsAssignableFrom<OpenApiBoolean>(property.Value.Default);
+                    Assert.True(defaultValue.Value);
+                });
+
+        });
+    }
+
+    [Fact]
     public async Task GetOpenApiResponse_HandlesNullablePocoResponse()
     {
         // Arrange
@@ -133,6 +179,28 @@ public partial class OpenApiComponentServiceTests : OpenApiDocumentServiceTestBa
                     Assert.Equal("string", property.Value.Type);
                     Assert.Equal("date-time", property.Value.Format);
                 });
+        });
+    }
+
+    [Fact]
+    public async Task GetOpenApiResponse_RespectsRequiredAttributeOnBodyProperties()
+    {
+        // Arrange
+        var builder = CreateBuilder();
+
+        // Act
+        builder.MapPost("/required-properties", () => new RequiredTodo { Title = "Test Title", Completed = true });
+
+        // Assert
+        await VerifyOpenApiDocument(builder, document =>
+        {
+            var operation = document.Paths["/required-properties"].Operations[OperationType.Post];
+            var response = operation.Responses["200"];
+            var content = Assert.Single(response.Content);
+            var schema = content.Value.Schema;
+            Assert.Collection(schema.Required,
+                property => Assert.Equal("title", property),
+                property => Assert.Equal("completed", property));
         });
     }
 
@@ -390,6 +458,142 @@ public partial class OpenApiComponentServiceTests : OpenApiDocumentServiceTestBa
                     Assert.Equal("createdAt", property.Key);
                     Assert.Equal("string", property.Value.Type);
                     Assert.Equal("date-time", property.Value.Format);
+                });
+        });
+    }
+
+    [Fact]
+    public async Task GetOpenApiResponse_HandlesGenericType()
+    {
+        // Arrange
+        var builder = CreateBuilder();
+
+        // Act
+        builder.MapGet("/", () => TypedResults.Ok<PaginatedItems<Todo>>(new(0, 1, 5, 50, [new Todo(1, "Test Title", true, DateTime.Now), new Todo(2, "Test Title 2", false, DateTime.Now)])));
+
+        // Assert that the response schema is correctly generated. For now, generics are inlined
+        // in the generated OpenAPI schema since OpenAPI supports generics via dynamic references as of
+        // OpenAPI 3.1.0.
+        await VerifyOpenApiDocument(builder, document =>
+        {
+            var operation = document.Paths["/"].Operations[OperationType.Get];
+            var responses = Assert.Single(operation.Responses);
+            var response = responses.Value;
+            Assert.True(response.Content.TryGetValue("application/json", out var mediaType));
+            Assert.Equal("object", mediaType.Schema.Type);
+            Assert.Collection(mediaType.Schema.Properties,
+                property =>
+                {
+                    Assert.Equal("pageIndex", property.Key);
+                    Assert.Equal("integer", property.Value.Type);
+                    Assert.Equal("int32", property.Value.Format);
+                },
+                property =>
+                {
+                    Assert.Equal("pageSize", property.Key);
+                    Assert.Equal("integer", property.Value.Type);
+                    Assert.Equal("int32", property.Value.Format);
+                },
+                property =>
+                {
+                    Assert.Equal("totalItems", property.Key);
+                    Assert.Equal("integer", property.Value.Type);
+                    Assert.Equal("int64", property.Value.Format);
+                },
+                property =>
+                {
+                    Assert.Equal("totalPages", property.Key);
+                    Assert.Equal("integer", property.Value.Type);
+                    Assert.Equal("int32", property.Value.Format);
+                },
+                property =>
+                {
+                    Assert.Equal("items", property.Key);
+                    Assert.Equal("array", property.Value.Type);
+                    Assert.NotNull(property.Value.Items);
+                    Assert.Equal("object", property.Value.Items.Type);
+                    Assert.Collection(property.Value.Items.Properties,
+                        property =>
+                        {
+                            Assert.Equal("id", property.Key);
+                            Assert.Equal("integer", property.Value.Type);
+                            Assert.Equal("int32", property.Value.Format);
+                        },
+                        property =>
+                        {
+                            Assert.Equal("title", property.Key);
+                            Assert.Equal("string", property.Value.Type);
+                        },
+                        property =>
+                        {
+                            Assert.Equal("completed", property.Key);
+                            Assert.Equal("boolean", property.Value.Type);
+                        },
+                        property =>
+                        {
+                            Assert.Equal("createdAt", property.Key);
+                            Assert.Equal("string", property.Value.Type);
+                            Assert.Equal("date-time", property.Value.Format);
+                        });
+                });
+        });
+    }
+
+    [Fact]
+    public async Task GetOpenApiResponse_HandlesValidationProblem()
+    {
+        // Arrange
+        var builder = CreateBuilder();
+
+        // Act
+        builder.MapGet("/", () => TypedResults.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["Name"] = ["Name is required"]
+        }));
+
+        // Assert
+        await VerifyOpenApiDocument(builder, document =>
+        {
+            var operation = document.Paths["/"].Operations[OperationType.Get];
+            var responses = Assert.Single(operation.Responses);
+            var response = responses.Value;
+            Assert.True(response.Content.TryGetValue("application/problem+json", out var mediaType));
+            Assert.Equal("object", mediaType.Schema.Type);
+            Assert.Collection(mediaType.Schema.Properties,
+                property =>
+                {
+                    Assert.Equal("type", property.Key);
+                    Assert.Equal("string", property.Value.Type);
+                },
+                property =>
+                {
+                    Assert.Equal("title", property.Key);
+                    Assert.Equal("string", property.Value.Type);
+                },
+                property =>
+                {
+                    Assert.Equal("status", property.Key);
+                    Assert.Equal("integer", property.Value.Type);
+                    Assert.Equal("int32", property.Value.Format);
+                },
+                property =>
+                {
+                    Assert.Equal("detail", property.Key);
+                    Assert.Equal("string", property.Value.Type);
+                },
+                property =>
+                {
+                    Assert.Equal("instance", property.Key);
+                    Assert.Equal("string", property.Value.Type);
+                },
+                property =>
+                {
+                    Assert.Equal("errors", property.Key);
+                    Assert.Equal("object", property.Value.Type);
+                    // The errors object is a dictionary of string[]. Use `additionalProperties`
+                    // to indicate that the payload can be arbitrary keys with string[] values.
+                    Assert.Equal("array", property.Value.AdditionalProperties.Type);
+                    Assert.Equal("string", property.Value.AdditionalProperties.Items.Type);
                 });
         });
     }
