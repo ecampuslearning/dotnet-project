@@ -88,10 +88,11 @@ internal sealed class OpenApiSchemaService(
             {
                 schema = new JsonObject();
             }
-            schema.ApplyPrimitiveTypesAndFormats(context);
-            schema.ApplySchemaReferenceId(context);
-            schema.ApplyPolymorphismOptions(context);
-            if (context.PropertyInfo is { AttributeProvider: { } attributeProvider } jsonPropertyInfo)
+            var createSchemaReferenceId = optionsMonitor.Get(documentName).CreateSchemaReferenceId;
+            schema.ApplyPrimitiveTypesAndFormats(context, createSchemaReferenceId);
+            schema.ApplySchemaReferenceId(context, createSchemaReferenceId);
+            schema.ApplyPolymorphismOptions(context, createSchemaReferenceId);
+            if (context.PropertyInfo is { } jsonPropertyInfo)
             {
                 // Short-circuit STJ's handling of nested properties, which uses a reference to the
                 // properties type schema with a schema that uses a document level reference.
@@ -102,6 +103,9 @@ internal sealed class OpenApiSchemaService(
                     return new JsonObject { [OpenApiSchemaKeywords.RefKeyword] = context.TypeInfo.GetSchemaReferenceId() };
                 }
                 schema.ApplyNullabilityContextInfo(jsonPropertyInfo);
+            }
+            if (context.PropertyInfo is { AttributeProvider: { } attributeProvider })
+            {
                 if (attributeProvider.GetCustomAttributes(inherit: false).OfType<ValidationAttribute>() is { } validationAttributes)
                 {
                     schema.ApplyValidationAttributes(validationAttributes);
