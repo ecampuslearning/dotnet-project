@@ -66,7 +66,8 @@ internal sealed class OpenApiSchemaService(
                 schema = new JsonObject
                 {
                     [OpenApiSchemaKeywords.TypeKeyword] = "string",
-                    [OpenApiSchemaKeywords.FormatKeyword] = "binary"
+                    [OpenApiSchemaKeywords.FormatKeyword] = "binary",
+                    [OpenApiConstants.SchemaId] = "IFormFile"
                 };
             }
             else if (type == typeof(IFormFileCollection))
@@ -77,14 +78,15 @@ internal sealed class OpenApiSchemaService(
                     [OpenApiSchemaKeywords.ItemsKeyword] = new JsonObject
                     {
                         [OpenApiSchemaKeywords.TypeKeyword] = "string",
-                        [OpenApiSchemaKeywords.FormatKeyword] = "binary"
+                        [OpenApiSchemaKeywords.FormatKeyword] = "binary",
+                        [OpenApiConstants.SchemaId] = "IFormFile"
                     }
                 };
             }
             // STJ uses `true` in place of an empty object to represent a schema that matches
-            // anything. We override this default behavior here to match the style traditionally
-            // expected in OpenAPI documents.
-            if (type == typeof(object))
+            // anything (like the `object` type) or types with user-defined converters. We override
+            // this default behavior here to match the format expected in OpenAPI v3.
+            if (schema.GetValueKind() == JsonValueKind.True)
             {
                 schema = new JsonObject();
             }
@@ -144,17 +146,83 @@ internal sealed class OpenApiSchemaService(
 
     internal async Task ApplySchemaTransformersAsync(OpenApiSchema schema, Type type, ApiParameterDescription? parameterDescription = null, CancellationToken cancellationToken = default)
     {
+        var jsonTypeInfo = _jsonSerializerOptions.GetTypeInfo(type);
         var context = new OpenApiSchemaTransformerContext
         {
             DocumentName = documentName,
-            Type = type,
+            JsonTypeInfo = jsonTypeInfo,
+            JsonPropertyInfo = null,
             ParameterDescription = parameterDescription,
             ApplicationServices = serviceProvider
         };
         for (var i = 0; i < _openApiOptions.SchemaTransformers.Count; i++)
         {
+            // Reset context object to base state before running each transformer.
             var transformer = _openApiOptions.SchemaTransformers[i];
-            await transformer(schema, context, cancellationToken);
+            // If the transformer is a type-based transformer, we need to initialize and finalize it
+            // once in the context of the top-level assembly and not the child properties we are invoking
+            // it on.
+            if (transformer is TypeBasedOpenApiSchemaTransformer typeBasedTransformer)
+            {
+                var initializedTransformer = typeBasedTransformer.InitializeTransformer(serviceProvider);
+                try
+                {
+                    await InnerApplySchemaTransformersAsync(schema, jsonTypeInfo, null, context, initializedTransformer, cancellationToken);
+                }
+                finally
+                {
+                    await TypeBasedOpenApiSchemaTransformer.FinalizeTransformer(initializedTransformer);
+                }
+            }
+            else
+            {
+                await InnerApplySchemaTransformersAsync(schema, jsonTypeInfo, null, context, transformer, cancellationToken);
+            }
+        }
+    }
+
+    private async Task InnerApplySchemaTransformersAsync(OpenApiSchema schema,
+        JsonTypeInfo jsonTypeInfo,
+        JsonPropertyInfo? jsonPropertyInfo,
+        OpenApiSchemaTransformerContext context,
+        IOpenApiSchemaTransformer transformer,
+        CancellationToken cancellationToken = default)
+    {
+        context.UpdateJsonTypeInfo(jsonTypeInfo, jsonPropertyInfo);
+        await transformer.TransformAsync(schema, context, cancellationToken);
+
+        // Only apply transformers on polymorphic schemas where we can resolve the derived
+        // types associated with the base type.
+        if (schema.AnyOf is { Count: > 0 } && jsonTypeInfo.PolymorphismOptions is not null)
+        {
+            var anyOfIndex = 0;
+            foreach (var derivedType in jsonTypeInfo.PolymorphismOptions.DerivedTypes)
+            {
+                var derivedJsonTypeInfo = _jsonSerializerOptions.GetTypeInfo(derivedType.DerivedType);
+                if (schema.AnyOf.Count <= anyOfIndex)
+                {
+                    break;
+                }
+                await InnerApplySchemaTransformersAsync(schema.AnyOf[anyOfIndex], derivedJsonTypeInfo, null, context, transformer, cancellationToken);
+                anyOfIndex++;
+            }
+        }
+
+        if (schema.Items is not null)
+        {
+            var elementTypeInfo = _jsonSerializerOptions.GetTypeInfo(jsonTypeInfo.ElementType!);
+            await InnerApplySchemaTransformersAsync(schema.Items, elementTypeInfo, null, context, transformer, cancellationToken);
+        }
+
+        if (schema.Properties is { Count: > 0 })
+        {
+            foreach (var propertyInfo in jsonTypeInfo.Properties)
+            {
+                if (schema.Properties.TryGetValue(propertyInfo.Name, out var propertySchema))
+                {
+                    await InnerApplySchemaTransformersAsync(propertySchema, _jsonSerializerOptions.GetTypeInfo(propertyInfo.PropertyType), propertyInfo, context, transformer, cancellationToken);
+                }
+            }
         }
     }
 

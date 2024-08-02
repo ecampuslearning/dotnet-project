@@ -36,9 +36,7 @@ internal sealed class OpenApiDocumentService(
 {
     private readonly OpenApiOptions _options = optionsMonitor.Get(documentName);
     private readonly OpenApiSchemaService _componentService = serviceProvider.GetRequiredKeyedService<OpenApiSchemaService>(documentName);
-    private readonly IOpenApiDocumentTransformer _schemaReferenceTransformer = new OpenApiSchemaReferenceTransformer();
-
-    private static readonly OpenApiEncoding _defaultFormEncoding = new OpenApiEncoding { Style = ParameterStyle.Form, Explode = true };
+    private readonly OpenApiSchemaReferenceTransformer _schemaReferenceTransformer = new();
 
     /// <summary>
     /// Cache of <see cref="OpenApiOperationTransformerContext"/> instances keyed by the
@@ -47,7 +45,7 @@ internal sealed class OpenApiDocumentService(
     /// operations, API descriptions, and their respective transformer contexts.
     /// </summary>
     private readonly Dictionary<string, OpenApiOperationTransformerContext> _operationTransformerContextCache = new();
-    private static readonly ApiResponseType _defaultApiResponseType = new ApiResponseType { StatusCode = StatusCodes.Status200OK };
+    private static readonly ApiResponseType _defaultApiResponseType = new() { StatusCode = StatusCodes.Status200OK };
 
     internal bool TryGetCachedOperationTransformerContext(string descriptionId, [NotNullWhen(true)] out OpenApiOperationTransformerContext? context)
         => _operationTransformerContextCache.TryGetValue(descriptionId, out context);
@@ -84,6 +82,41 @@ internal sealed class OpenApiDocumentService(
         }
         // Move duplicated JSON schemas to the global components.schemas object and map references after all transformers have run.
         await _schemaReferenceTransformer.TransformAsync(document, documentTransformerContext, cancellationToken);
+    }
+
+    internal async Task ForEachOperationAsync(
+        OpenApiDocument document,
+        Func<OpenApiOperation, OpenApiOperationTransformerContext, CancellationToken, Task> callback,
+        CancellationToken cancellationToken)
+    {
+        foreach (var pathItem in document.Paths.Values)
+        {
+            for (var i = 0; i < OpenApiConstants.OperationTypes.Length; i++)
+            {
+                var operationType = OpenApiConstants.OperationTypes[i];
+                if (!pathItem.Operations.TryGetValue(operationType, out var operation))
+                {
+                    continue;
+                }
+
+                if (operation.Extensions.TryGetValue(OpenApiConstants.DescriptionId, out var descriptionIdExtension) &&
+                    descriptionIdExtension is ScrubbedOpenApiAny { Value: string descriptionId } &&
+                    TryGetCachedOperationTransformerContext(descriptionId, out var operationContext))
+                {
+                    await callback(operation, operationContext, cancellationToken);
+                }
+                else
+                {
+                    // If the cached operation transformer context was not found, throw an exception.
+                    // This can occur if the `x-aspnetcore-id` extension attribute was removed by the
+                    // user in another operation transformer or if the lookup for operation transformer
+                    // context resulted in a cache miss. As an alternative here, we could just to implement
+                    // the "slow-path" and look up the ApiDescription associated with the OpenApiOperation
+                    // using the OperationType and given path, but we'll avoid this for now.
+                    throw new InvalidOperationException("Cached operation transformer context not found. Please ensure that the operation contains the `x-aspnetcore-id` extension attribute.");
+                }
+            }
+        }
     }
 
     // Note: Internal for testing.
@@ -137,13 +170,23 @@ internal sealed class OpenApiDocumentService(
         {
             var operation = await GetOperationAsync(description, capturedTags, cancellationToken);
             operation.Extensions.Add(OpenApiConstants.DescriptionId, new ScrubbedOpenApiAny(description.ActionDescriptor.Id));
-            _operationTransformerContextCache.TryAdd(description.ActionDescriptor.Id, new OpenApiOperationTransformerContext
+
+            var operationContext = new OpenApiOperationTransformerContext
             {
                 DocumentName = documentName,
                 Description = description,
                 ApplicationServices = serviceProvider,
-            });
+            };
+
+            _operationTransformerContextCache.TryAdd(description.ActionDescriptor.Id, operationContext);
             operations[description.GetOperationType()] = operation;
+
+            // Use index-based for loop to avoid allocating an enumerator with a foreach.
+            for (var i = 0; i < _options.OperationTransformers.Count; i++)
+            {
+                var transformer = _options.OperationTransformers[i];
+                await transformer.TransformAsync(operation, operationContext, cancellationToken);
+            }
         }
         return operations;
     }
@@ -317,12 +360,17 @@ internal sealed class OpenApiDocumentService(
         // in the same endpoint.
         if (description.TryGetFormParameters(out var formParameters))
         {
-            return await GetFormRequestBody(description.SupportedRequestFormats, formParameters, cancellationToken);
+            var endpointMetadata = description.ActionDescriptor.EndpointMetadata;
+            return await GetFormRequestBody(description.SupportedRequestFormats, formParameters, endpointMetadata, cancellationToken);
         }
         return null;
     }
 
-    private async Task<OpenApiRequestBody> GetFormRequestBody(IList<ApiRequestFormat> supportedRequestFormats, IEnumerable<ApiParameterDescription> formParameters, CancellationToken cancellationToken)
+    private async Task<OpenApiRequestBody> GetFormRequestBody(
+        IList<ApiRequestFormat> supportedRequestFormats,
+        IEnumerable<ApiParameterDescription> formParameters,
+        IList<object> endpointMetadata,
+        CancellationToken cancellationToken)
     {
         if (supportedRequestFormats.Count == 0)
         {
@@ -357,7 +405,7 @@ internal sealed class OpenApiDocumentService(
             if (parameter.All(parameter => parameter.ModelMetadata.ContainerType is null))
             {
                 var description = parameter.Single();
-                var parameterSchema = await _componentService.GetOrCreateSchemaAsync(description.Type, null, cancellationToken: cancellationToken);
+                var parameterSchema = await _componentService.GetOrCreateSchemaAsync(description.Type, description, cancellationToken: cancellationToken);
                 // Form files are keyed by their parameter name so we must capture the parameter name
                 // as a property in the schema.
                 if (description.Type == typeof(IFormFile) || description.Type == typeof(IFormFileCollection))
@@ -380,11 +428,17 @@ internal sealed class OpenApiDocumentService(
                 }
                 else
                 {
+                    // Resolve complex type state from endpoint metadata when checking for
+                    // minimal API types to use trim friendly code paths.
+                    var isComplexType = endpointMetadata
+                        .OfType<IParameterBindingMetadata>()
+                        .SingleOrDefault(parameter => parameter.Name == description.Name)?
+                        .HasTryParse == false;
                     if (hasMultipleFormParameters)
                     {
                         // Here and below: POCOs do not need to be need under their parameter name in the grouping.
                         // The form-binding implementation will capture them implicitly.
-                        if (description.ModelMetadata.IsComplexType)
+                        if (isComplexType)
                         {
                             schema.AllOf.Add(parameterSchema);
                         }
@@ -402,7 +456,7 @@ internal sealed class OpenApiDocumentService(
                     }
                     else
                     {
-                        if (description.ModelMetadata.IsComplexType)
+                        if (isComplexType)
                         {
                             schema = parameterSchema;
                         }
@@ -420,7 +474,7 @@ internal sealed class OpenApiDocumentService(
                     var propertySchema = new OpenApiSchema { Type = "object", Properties = new Dictionary<string, OpenApiSchema>() };
                     foreach (var description in parameter)
                     {
-                        propertySchema.Properties[description.Name] = await _componentService.GetOrCreateSchemaAsync(description.Type, null, cancellationToken: cancellationToken);
+                        propertySchema.Properties[description.Name] = await _componentService.GetOrCreateSchemaAsync(description.Type, description, cancellationToken: cancellationToken);
                     }
                     schema.AllOf.Add(propertySchema);
                 }
@@ -428,7 +482,7 @@ internal sealed class OpenApiDocumentService(
                 {
                     foreach (var description in parameter)
                     {
-                        schema.Properties[description.Name] = await _componentService.GetOrCreateSchemaAsync(description.Type, null, cancellationToken: cancellationToken);
+                        schema.Properties[description.Name] = await _componentService.GetOrCreateSchemaAsync(description.Type, description, cancellationToken: cancellationToken);
                     }
                 }
             }
@@ -439,8 +493,7 @@ internal sealed class OpenApiDocumentService(
             var contentType = requestFormat.MediaType;
             requestBody.Content[contentType] = new OpenApiMediaType
             {
-                Schema = schema,
-                Encoding = new Dictionary<string, OpenApiEncoding>() { [contentType] = _defaultFormEncoding }
+                Schema = schema
             };
         }
 
