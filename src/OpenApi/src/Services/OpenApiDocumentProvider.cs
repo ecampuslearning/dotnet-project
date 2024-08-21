@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Microsoft.OpenApi;
 using Microsoft.OpenApi.Extensions;
+using Microsoft.OpenApi.Writers;
 using System.Linq;
 
 namespace Microsoft.Extensions.ApiDescriptions;
@@ -43,8 +44,9 @@ internal sealed class OpenApiDocumentProvider(IServiceProvider serviceProvider) 
         // document to a file. See https://github.com/microsoft/OpenAPI.NET/issues/421 for
         // more info.
         var targetDocumentService = serviceProvider.GetRequiredKeyedService<OpenApiDocumentService>(documentName);
-        var document = await targetDocumentService.GetOpenApiDocumentAsync();
-        var jsonWriter = new ScrubbingOpenApiJsonWriter(writer);
+        using var scopedService = serviceProvider.CreateScope();
+        var document = await targetDocumentService.GetOpenApiDocumentAsync(scopedService.ServiceProvider);
+        var jsonWriter = new OpenApiJsonWriter(writer);
         document.Serialize(jsonWriter, openApiSpecVersion);
     }
 

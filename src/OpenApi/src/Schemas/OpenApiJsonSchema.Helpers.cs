@@ -300,11 +300,15 @@ internal sealed partial class OpenApiJsonSchema
             case OpenApiSchemaKeywords.DiscriminatorMappingKeyword:
                 reader.Read();
                 var mappings = ReadDictionary<string>(ref reader);
-                schema.Discriminator.Mapping = mappings;
+                if (mappings is not null)
+                {
+                    schema.Discriminator.Mapping = mappings;
+                }
                 break;
             case OpenApiConstants.SchemaId:
                 reader.Read();
-                schema.Extensions.Add(OpenApiConstants.SchemaId, new ScrubbedOpenApiAny(reader.GetString()));
+                schema.Annotations ??= new Dictionary<string, object>();
+                schema.Annotations.Add(OpenApiConstants.SchemaId, reader.GetString());
                 break;
             // OpenAPI does not support the `const` keyword in its schema implementation, so
             // we map it to its closest approximation, an enum with a single value, here.

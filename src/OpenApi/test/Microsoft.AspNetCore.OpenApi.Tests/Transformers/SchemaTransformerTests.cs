@@ -326,11 +326,7 @@ public class SchemaTransformerTests : OpenApiDocumentServiceTestBase
         var options = new OpenApiOptions();
         options.AddSchemaTransformer<ActivatedTransformerWithDependency>();
 
-        // Assert that transient dependency is instantiated once for each
-        // request to the OpenAPI document for each created schema and its
-        // sub-schemas. In this case, it's instantiated 4 times for each top-level
-        // schema, 16 times for each property within each schema.
-        var countBefore = Dependency.InstantiationCount;
+        Dependency.InstantiationCount = 0;
         await VerifyOpenApiDocument(builder, options, document =>
         {
             var path = Assert.Single(document.Paths.Values);
@@ -351,8 +347,9 @@ public class SchemaTransformerTests : OpenApiDocumentServiceTestBase
             var responseSchema = getOperation.Responses["200"].Content["application/json"].Schema.GetEffective(document);
             Assert.True(responseSchema.Extensions.ContainsKey("x-my-extension"));
         });
-        var countAfter = Dependency.InstantiationCount;
-        Assert.Equal(countBefore + 4, countAfter);
+        // Assert that the transient dependency has a "scoped" lifetime within
+        // the context of the transformer and is called twice, once for each request.
+        Assert.Equal(2, Dependency.InstantiationCount);
     }
 
     [Fact]
@@ -377,8 +374,8 @@ public class SchemaTransformerTests : OpenApiDocumentServiceTestBase
             var responseSchema = getOperation.Responses["200"].Content["application/json"].Schema.GetEffective(document);
             Assert.Equal("Schema Description", responseSchema.Description);
         });
-        // Assert that the transformer is disposed twice for each top-level schema.
-        Assert.Equal(2, DisposableTransformer.DisposeCount);
+        // Assert that the transformer is disposed once for the entire document.
+        Assert.Equal(1, DisposableTransformer.DisposeCount);
     }
 
     [Fact]
@@ -403,8 +400,8 @@ public class SchemaTransformerTests : OpenApiDocumentServiceTestBase
             var responseSchema = getOperation.Responses["200"].Content["application/json"].Schema.GetEffective(document);
             Assert.Equal("Schema Description", responseSchema.Description);
         });
-        // Assert that the transformer is disposed twice for each top-level schema.
-        Assert.Equal(2, AsyncDisposableTransformer.DisposeCount);
+        // Assert that the transformer is disposed once for the entire document.
+        Assert.Equal(1, AsyncDisposableTransformer.DisposeCount);
     }
 
     [Fact]
@@ -546,7 +543,7 @@ public class SchemaTransformerTests : OpenApiDocumentServiceTestBase
         });
     }
 
-    [Fact(Skip = "Depends on https://github.com/dotnet/runtime/issues/104046")]
+    [Fact]
     public async Task SchemaTransformer_CanModifyListOfPolymorphicTypes()
     {
         var builder = CreateBuilder();
@@ -581,6 +578,88 @@ public class SchemaTransformerTests : OpenApiDocumentServiceTestBase
 
             // Assert that the `Square` type within the polymorphic type list has been updated
             var squareSubschema = Assert.Single(itemSchema.AnyOf.Where(s => s.Reference.Id == "ShapeSquare"));
+            // Assert that the x-my-extension type is set to this-is-a-square
+            Assert.True(squareSubschema.GetEffective(document).Extensions.TryGetValue("x-my-extension", out var squareExtension));
+            Assert.Equal("this-is-a-square", ((OpenApiString)squareExtension).Value);
+        });
+    }
+
+    [Fact]
+    public async Task SchemaTransformer_CanModifyPolymorphicTypesInProperties()
+    {
+        var builder = CreateBuilder();
+
+        builder.MapGet("/list", () => new PolymorphicContainer());
+
+        var options = new OpenApiOptions();
+        options.AddSchemaTransformer((schema, context, cancellationToken) =>
+        {
+            if (context.JsonTypeInfo.Type == typeof(Triangle))
+            {
+                schema.Extensions["x-my-extension"] = new OpenApiString("this-is-a-triangle");
+            }
+            if (context.JsonTypeInfo.Type == typeof(Square))
+            {
+                schema.Extensions["x-my-extension"] = new OpenApiString("this-is-a-square");
+            }
+            return Task.CompletedTask;
+        });
+
+        await VerifyOpenApiDocument(builder, options, document =>
+        {
+            // Assert that the `Triangle` type within the list has been updated
+            var path = document.Paths["/list"];
+            var getOperation = path.Operations[OperationType.Get];
+            var responseSchema = getOperation.Responses["200"].Content["application/json"].Schema;
+            var someShapeSchema = responseSchema.GetEffective(document).Properties["someShape"];
+            var triangleSubschema = Assert.Single(someShapeSchema.AnyOf.Where(s => s.Reference.Id == "ShapeTriangle"));
+            // Assert that the x-my-extension type is set to this-is-a-triangle
+            Assert.True(triangleSubschema.GetEffective(document).Extensions.TryGetValue("x-my-extension", out var triangleExtension));
+            Assert.Equal("this-is-a-triangle", ((OpenApiString)triangleExtension).Value);
+
+            // Assert that the `Square` type within the polymorphic type list has been updated
+            var squareSubschema = Assert.Single(someShapeSchema.AnyOf.Where(s => s.Reference.Id == "ShapeSquare"));
+            // Assert that the x-my-extension type is set to this-is-a-square
+            Assert.True(squareSubschema.GetEffective(document).Extensions.TryGetValue("x-my-extension", out var squareExtension));
+            Assert.Equal("this-is-a-square", ((OpenApiString)squareExtension).Value);
+        });
+    }
+
+    [Fact]
+    public async Task SchemaTransformer_CanModifyDeeplyNestedPolymorphicTypesInProperties()
+    {
+        var builder = CreateBuilder();
+
+        builder.MapGet("/list", () => new List<PolymorphicContainer>());
+
+        var options = new OpenApiOptions();
+        options.AddSchemaTransformer((schema, context, cancellationToken) =>
+        {
+            if (context.JsonTypeInfo.Type == typeof(Triangle))
+            {
+                schema.Extensions["x-my-extension"] = new OpenApiString("this-is-a-triangle");
+            }
+            if (context.JsonTypeInfo.Type == typeof(Square))
+            {
+                schema.Extensions["x-my-extension"] = new OpenApiString("this-is-a-square");
+            }
+            return Task.CompletedTask;
+        });
+
+        await VerifyOpenApiDocument(builder, options, document =>
+        {
+            // Assert that the `Triangle` type within the list has been updated
+            var path = document.Paths["/list"];
+            var getOperation = path.Operations[OperationType.Get];
+            var responseSchema = getOperation.Responses["200"].Content["application/json"].Schema;
+            var someShapeSchema = responseSchema.GetEffective(document).Items.GetEffective(document).Properties["someShape"];
+            var triangleSubschema = Assert.Single(someShapeSchema.AnyOf.Where(s => s.Reference.Id == "ShapeTriangle"));
+            // Assert that the x-my-extension type is set to this-is-a-triangle
+            Assert.True(triangleSubschema.GetEffective(document).Extensions.TryGetValue("x-my-extension", out var triangleExtension));
+            Assert.Equal("this-is-a-triangle", ((OpenApiString)triangleExtension).Value);
+
+            // Assert that the `Square` type within the polymorphic type list has been updated
+            var squareSubschema = Assert.Single(someShapeSchema.AnyOf.Where(s => s.Reference.Id == "ShapeSquare"));
             // Assert that the x-my-extension type is set to this-is-a-square
             Assert.True(squareSubschema.GetEffective(document).Extensions.TryGetValue("x-my-extension", out var squareExtension));
             Assert.Equal("this-is-a-square", ((OpenApiString)squareExtension).Value);
@@ -674,6 +753,94 @@ public class SchemaTransformerTests : OpenApiDocumentServiceTestBase
                 return;
             });
         }
+    }
+
+    [Fact]
+    public async Task SchemaTransformer_CanAccessSingletonServiceFromContextApplicationServices()
+    {
+        var serviceCollection = new ServiceCollection().AddSingleton<Dependency>();
+        var builder = CreateBuilder(serviceCollection);
+
+        builder.MapGet("/todo", () => new Todo(1, "Item1", false, DateTime.Now));
+
+        var options = new OpenApiOptions();
+        Dependency.InstantiationCount = 0;
+        options.AddSchemaTransformer((schema, context, cancellationToken) =>
+        {
+            var service = context.ApplicationServices.GetRequiredService<Dependency>();
+            var sameServiceAgain = context.ApplicationServices.GetRequiredService<Dependency>();
+            service.TestMethod();
+            sameServiceAgain.TestMethod();
+            return Task.CompletedTask;
+        });
+
+        await VerifyOpenApiDocument(builder, options, document => { });
+        await VerifyOpenApiDocument(builder, options, document => { });
+
+        // Assert that the singleton dependency is instantiated only once
+        // for the entire lifetime of the application.
+        Assert.Equal(1, Dependency.InstantiationCount);
+    }
+
+    [Fact]
+    public async Task SchemaTransformer_CanAccessScopedServiceFromContextApplicationServices()
+    {
+        var serviceCollection = new ServiceCollection().AddScoped<Dependency>();
+        var builder = CreateBuilder(serviceCollection);
+
+        builder.MapGet("/todo", () => new Todo(1, "Item1", false, DateTime.Now));
+
+        var options = new OpenApiOptions();
+        Dependency.InstantiationCount = 0;
+        options.AddSchemaTransformer((schema, context, cancellationToken) =>
+        {
+            var service = context.ApplicationServices.GetRequiredService<Dependency>();
+            var sameServiceAgain = context.ApplicationServices.GetRequiredService<Dependency>();
+            service.TestMethod();
+            sameServiceAgain.TestMethod();
+            return Task.CompletedTask;
+        });
+
+        await VerifyOpenApiDocument(builder, options, document => { });
+        await VerifyOpenApiDocument(builder, options, document => { });
+
+        // Assert that the scoped dependency is instantiated twice. Once for
+        // each request to the document.
+        Assert.Equal(2, Dependency.InstantiationCount);
+    }
+
+    [Fact]
+    public async Task SchemaTransformer_CanAccessTransientServiceFromContextApplicationServices()
+    {
+        var serviceCollection = new ServiceCollection().AddTransient<Dependency>();
+        var builder = CreateBuilder(serviceCollection);
+
+        builder.MapGet("/todo", () => new Todo(1, "Item1", false, DateTime.Now));
+
+        var options = new OpenApiOptions();
+        Dependency.InstantiationCount = 0;
+        options.AddSchemaTransformer((schema, context, cancellationToken) =>
+        {
+            var service = context.ApplicationServices.GetRequiredService<Dependency>();
+            var sameServiceAgain = context.ApplicationServices.GetRequiredService<Dependency>();
+            service.TestMethod();
+            sameServiceAgain.TestMethod();
+            return Task.CompletedTask;
+        });
+
+        await VerifyOpenApiDocument(builder, options, document => { });
+        // Assert that the transient dependency is invoked for each schema
+        // in the document. In this case, we have five total schemas in the document.
+        // One for the top-level `Todo` type and four for the properties of the `Todo` type.
+        // Since we call GetRequiredService twice in the transformer, the total number of
+        // instantiations should be 10.
+        Assert.Equal(10, Dependency.InstantiationCount);
+    }
+
+    private class PolymorphicContainer
+    {
+        public string Name { get; }
+        public Shape SomeShape { get; }
     }
 
     private class ActivatedTransformer : IOpenApiSchemaTransformer

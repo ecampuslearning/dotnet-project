@@ -501,19 +501,30 @@ configuration:
           branch: main
       then:
       - addMilestone:
-          milestone: 9.0-rc1
+          milestone: 10.0-preview1
       description: '[Milestone Assignments] Assign Milestone to PRs merged to the `main` branch'
     - if:
       - payloadType: Pull_Request
       - isAction:
           action: Closed
       - targetsBranch:
-          branch: release/9.0-preview7
+          branch: release/9.0-rc1
       then:
       - removeMilestone
       - addMilestone:
-          milestone: 9.0-preview7
-      description: '[Milestone Assignments] Assign Milestone to PRs merged to release/9.0-preview7 branch'
+          milestone: 9.0-rc1
+      description: '[Milestone Assignments] Assign Milestone to PRs merged to release/9.0-rc1 branch'
+    - if:
+      - payloadType: Pull_Request
+      - isAction:
+          action: Closed
+      - targetsBranch:
+          branch: release/9.0
+      then:
+      - removeMilestone
+      - addMilestone:
+          milestone: 9.0-rc2
+      description: '[Milestone Assignments] Assign Milestone to PRs merged to release/9.0 branch'
     - if:
       - payloadType: Issues
       - isAction:
@@ -674,7 +685,7 @@ configuration:
       then:
       - removeMilestone
       - addMilestone:
-          milestone: 6.0.33
+          milestone: 6.0.34
       description: '[Milestone Assignments] Assign Milestone to PRs merged to release/6.0 branch'
     - if:
       - payloadType: Pull_Request
@@ -685,7 +696,7 @@ configuration:
       then:
       - removeMilestone
       - addMilestone:
-          milestone: 8.0.8
+          milestone: 8.0.9
       description: '[Milestone Assignments] Assign Milestone to PRs merged to release/8.0 branch'
     - if:
       - payloadType: Issues
