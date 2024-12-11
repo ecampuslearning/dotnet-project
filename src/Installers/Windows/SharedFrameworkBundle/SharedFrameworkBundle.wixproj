@@ -13,6 +13,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <WixExtension Include="WixUtilExtension">
+      <HintPath>$(WixExtDir)\WixUtilExtension.dll</HintPath>
+      <Name>WixUtilExtension</Name>
+    </WixExtension>
     <WixExtension Include="WixDependencyExtension">
       <HintPath>$(WixExtDir)\WixDependencyExtension.dll</HintPath>
       <Name>WixDependencyExtension</Name>
@@ -25,38 +29,18 @@
 
   <ItemGroup>
     <Compile Include="Bundle.wxs" />
+    <Compile Include="$(PkgMicrosoft_DotNet_Build_Tasks_Installers)\build\wix\bundle\upgradePolicies.wxs" />
     <Content Include="thm.xml" />
   </ItemGroup>
 
-  <Choose>
-    <When Condition="'$(Platform)' == 'arm64'">
-      <ItemGroup>
-        <ProjectReference Include="..\SharedFrameworkLib\SharedFrameworkLib.wixproj" SetPlatform="Platform=arm64">
-          <Name>SharedFrameworkLib</Name>
-          <Project>{5244BC49-2568-4701-80A6-EAB8950AB5FA}</Project>
-          <Private>True</Private>
-          <DoNotHarvest>True</DoNotHarvest>
-        </ProjectReference>
-      </ItemGroup>
-    </When>
-    <Otherwise>
-      <ItemGroup>
-        <ProjectReference Include="..\SharedFrameworkLib\SharedFrameworkLib.wixproj" SetPlatform="Platform=x86">
-          <Name>SharedFrameworkLib</Name>
-          <Project>{5244BC49-2568-4701-80A6-EAB8950AB5FA}</Project>
-          <Private>True</Private>
-          <DoNotHarvest>True</DoNotHarvest>
-        </ProjectReference>
-        <ProjectReference Include="..\SharedFrameworkLib\SharedFrameworkLib.wixproj" SetPlatform="Platform=x64">
-          <Name>SharedFrameworkLib</Name>
-          <Project>{5244BC49-2568-4701-80A6-EAB8950AB5FA}</Project>
-          <Private>True</Private>
-          <DoNotHarvest>True</DoNotHarvest>
-        </ProjectReference>
-      </ItemGroup>
-    </Otherwise>
-  </Choose>
-
+  <ItemGroup>
+    <ProjectReference Include="..\SharedFramework\SharedFramework.wixproj" SetPlatform="Platform=$(Platform)">
+      <Name>SharedFramework</Name>
+      <Project>{5244BC49-2568-4701-80A6-EAB8950AB5FA}</Project>
+      <Private>True</Private>
+      <DoNotHarvest>True</DoNotHarvest>
+    </ProjectReference>
+  </ItemGroup>
 
   <Import Project="$([MSBuild]::GetDirectoryNameOfFileAbove($(MSBuildThisFileDirectory), Directory.Build.targets))\Directory.Build.targets" />
 
@@ -85,6 +69,8 @@
     <DefineConstants>$(DefineConstants);BundleRegManufacturer=$(BundleRegManufacturer)</DefineConstants>
     <DefineConstants>$(DefineConstants);BundleRegFamily=$(BundleRegFamily)</DefineConstants>
     <DefineConstants>$(DefineConstants);BundleRegName=$(BundleRegName)</DefineConstants>
+    <DefineConstants>$(DefineConstants);InstallersOutputPath=$(InstallersOutputPath)</DefineConstants>
+    <DefineConstants>$(DefineConstants);SharedFxRedistInstaller=$(RuntimeInstallerBaseName)-$(PackageVersion)-win-$(Platform).msi</DefineConstants>
   </PropertyGroup>
 
 </Project>
