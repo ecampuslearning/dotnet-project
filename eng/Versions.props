@@ -143,8 +143,8 @@
     <SystemIOHashingVersion>10.0.0-preview.3.25121.11</SystemIOHashingVersion>
     <SystemRuntimeCachingVersion>10.0.0-preview.3.25121.11</SystemRuntimeCachingVersion>
     <!-- Packages from dotnet/extensions -->
-    <MicrosoftExtensionsDiagnosticsTestingVersion>9.3.0-preview.1.25107.9</MicrosoftExtensionsDiagnosticsTestingVersion>
-    <MicrosoftExtensionsTimeProviderTestingVersion>9.3.0-preview.1.25107.9</MicrosoftExtensionsTimeProviderTestingVersion>
+    <MicrosoftExtensionsDiagnosticsTestingVersion>9.3.0-preview.1.25120.9</MicrosoftExtensionsDiagnosticsTestingVersion>
+    <MicrosoftExtensionsTimeProviderTestingVersion>9.3.0-preview.1.25120.9</MicrosoftExtensionsTimeProviderTestingVersion>
     <!-- Packages from dotnet/efcore -->
     <dotnetefVersion>10.0.0-preview.2.25116.1</dotnetefVersion>
     <MicrosoftEntityFrameworkCoreInMemoryVersion>10.0.0-preview.2.25116.1</MicrosoftEntityFrameworkCoreInMemoryVersion>
@@ -172,11 +172,11 @@
     <MicrosoftDotNetRemoteExecutorVersion>10.0.0-beta.25106.4</MicrosoftDotNetRemoteExecutorVersion>
     <MicrosoftSourceBuildIntermediatearcadeVersion>10.0.0-beta.25106.4</MicrosoftSourceBuildIntermediatearcadeVersion>
     <!-- Packages from dotnet/source-build-externals -->
-    <MicrosoftSourceBuildIntermediatesourcebuildexternalsVersion>10.0.610402</MicrosoftSourceBuildIntermediatesourcebuildexternalsVersion>
+    <MicrosoftSourceBuildIntermediatesourcebuildexternalsVersion>10.0.611801</MicrosoftSourceBuildIntermediatesourcebuildexternalsVersion>
     <!-- Packages from dotnet/source-build-reference-packages -->
     <MicrosoftSourceBuildIntermediatesourcebuildreferencepackagesVersion>10.0.611901</MicrosoftSourceBuildIntermediatesourcebuildreferencepackagesVersion>
     <!-- Packages from dotnet/symreader -->
-    <MicrosoftSourceBuildIntermediatesymreaderVersion>2.2.0-beta.25103.1</MicrosoftSourceBuildIntermediatesymreaderVersion>
+    <MicrosoftSourceBuildIntermediatesymreaderVersion>2.2.0-beta.25123.1</MicrosoftSourceBuildIntermediatesymreaderVersion>
     <!-- Packages from dotnet/xdt -->
     <MicrosoftWebXdtVersion>10.0.0-preview.25067.1</MicrosoftWebXdtVersion>
     <MicrosoftSourceBuildIntermediatexdtVersion>10.0.0-preview.25067.1</MicrosoftSourceBuildIntermediatexdtVersion>
